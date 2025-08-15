@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Inventory Scanner Demo</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
+    header { padding: 16px; text-align: center; background: #111827; border-bottom: 1px solid #1f2937; }
+    header h1 { margin: 0; font-size: 1.15rem; letter-spacing: .3px; }
+    main { padding: 16px; max-width: 980px; margin: 0 auto; }
+    .card { background: #111827; border: 1px solid #1f2937; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+    .row { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    @media (min-width: 720px) { .row.two { grid-template-columns: 1fr 1fr; } }
+    label { font-size: .9rem; color: #cbd5e1; }
+    input, select, button, textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #374151; background: #0b1220; color: #e2e8f0; }
+    button { cursor: pointer; font-weight: 600; }
+    button.primary { background: #2563eb; border-color: #2563eb; }
+    button.ghost { background: #0b1220; }
+    .flex { display: flex; gap: 8px; align-items: center; }
+    .flex-col { display: flex; flex-direction: column; gap: 8px; }
+    video { width: 100%; border-radius: 12px; border: 1px solid #1f2937; background: black; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 8px 10px; border-bottom: 1px solid #1f2937; font-size: .92rem; }
+    th { text-align: left; color: #cbd5e1; }
+    .muted { color: #94a3b8; }
+    .pill { padding: 2px 8px; border-radius: 999px; font-size: .8rem; font-weight: 700; display: inline-block; }
+    .in { background: #064e3b; color: #bbf7d0; }
+    .out { background: #4c0519; color: #fecdd3; }
+    footer { padding: 12px; text-align: center; color: #94a3b8; }
+    .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background:#0b1220; border:1px solid #334155; padding:2px 6px; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Inventory & Shipping Demo — Camera Barcode Scanner</h1>
+  </header>
+  <main>
+    <section class="card">
+      <div class="row two">
+        <div>
+          <label>Live Camera</label>
+          <video id="preview" muted playsinline></video>
+          <div class="flex" style="margin-top:8px">
+            <button id="startBtn" class="primary">Start Scanner</button>
+            <button id="stopBtn" class="ghost">Stop</button>
+          </div>
+          <div class="muted" style="margin-top:8px">
+            Tip: On iOS, ensure Safari has camera permission. If a local file blocks camera, host this via <span class="kbd">python -m http.server</span> or GitHub Pages.
+          </div>
+        </div>
+        <div>
+          <div class="flex-col">
+            <div>
+              <label>Scanned / Item Code</label>
+              <input id="code" placeholder="Scan a barcode or type a SKU" autocomplete="off" />
+            </div>
+            <div class="row two">
+              <div>
+                <label>Action</label>
+                <select id="action">
+                  <option value="IN">IN (Receive)</option>
+                  <option value="OUT">OUT (Ship)</option>
+                </select>
+              </div>
+              <div>
+                <label>Quantity</label>
+                <input id="qty" type="number" min="1" step="1" value="1" />
+              </div>
+            </div>
+            <div>
+              <label>Notes (optional)</label>
+              <input id="notes" placeholder="Pallet A3, PO-1234, operator initials, etc." />
+            </div>
+            <div class="flex">
+              <button id="addBtn" class="primary">Add to Log</button>
+              <button id="clearBtn" class="ghost">Clear Log</button>
+              <button id="exportBtn" class="ghost">Export CSV</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3 style="margin-top:0">Transactions</h3>
+      <table id="logTable">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Timestamp</th>
+            <th>Code</th>
+            <th>Action</th>
+            <th>Qty</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div class="muted" style="margin-top:8px">Data is kept in memory for the session. Export CSV before closing.</div>
+    </section>
+
+    <section class="card">
+      <h3 style="margin-top:0">How it works</h3>
+      <ul>
+        <li>Uses <strong>ZXing</strong> to decode barcodes in the browser (no backend).</li>
+        <li>Works best with well-lit codes and steady framing.</li>
+        <li>If the wrong code is captured, just type the correct SKU into the field.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    MIT Licensed · Demo by Gabriel + Assistant
+  </footer>
+
+  <!-- ZXing Browser (via jsDelivr CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/browser@latest"></script>
+  <script>
+    const videoEl = document.getElementById('preview');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const codeInput = document.getElementById('code');
+    const actionSel = document.getElementById('action');
+    const qtyInput = document.getElementById('qty');
+    const notesInput = document.getElementById('notes');
+    const addBtn = document.getElementById('addBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const exportBtn = document.getElementById('exportBtn');
+    const tbody = document.querySelector('#logTable tbody');
+
+    let controls = null;
+    let counter = 0;
+    const rows = [];
+
+    function addRow(rec) {
+      rows.push(rec);
+      counter += 1;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${counter}</td>
+        <td>${rec.timestamp}</td>
+        <td>${rec.code}</td>
+        <td><span class="pill ${rec.action === 'IN' ? 'in' : 'out'}">${rec.action}</span></td>
+        <td>${rec.qty}</td>
+        <td>${rec.notes || ''}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+
+    function nowISO() {
+      const d = new Date();
+      return d.toISOString().replace('T',' ').substring(0,19);
+    }
+
+    async function start() {
+      try {
+        const hints = new Map();
+        // Fast start with default config:
+        const cbReader = new ZXingBrowser.BrowserMultiFormatReader();
+        controls = await ZXingBrowser.BrowserCodeReader.scanVideo(videoEl, {deviceId: undefined}, (result, err) => {
+          if (result) {
+            codeInput.value = result.getText();
+            // Optional vibration on scan (mobile)
+            if (window.navigator && 'vibrate' in navigator) { navigator.vibrate(50); }
+          }
+        }, cbReader);
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+      } catch (e) {
+        alert('Camera start failed. Make sure you allowed camera permission.\n' + e);
+      }
+    }
+
+    function stop() {
+      if (controls) { controls.stop(); controls = null; }
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+    }
+
+    function add() {
+      const code = codeInput.value.trim();
+      const qty = parseInt(qtyInput.value, 10) || 0;
+      const action = actionSel.value;
+      const notes = notesInput.value.trim();
+      if (!code) { alert('Scan or enter a code first.'); return; }
+      if (qty < 1) { alert('Quantity must be at least 1.'); return; }
+      const rec = { timestamp: nowISO(), code, action, qty, notes };
+      addRow(rec);
+      codeInput.value = '';
+      qtyInput.value = '1';
+      notesInput.value = '';
+      codeInput.focus();
+    }
+
+    function clearLog() {
+      if (!confirm('Clear all rows? Make sure you exported the CSV.')) return;
+      rows.splice(0, rows.length);
+      tbody.innerHTML = '';
+      counter = 0;
+    }
+
+    function exportCSV() {
+      if (rows.length === 0) { alert('No rows to export.'); return; }
+      const header = ['timestamp','code','action','qty','notes'];
+      const escape = (s) => {
+        if (s == null) return '';
+        s = String(s);
+        if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+          return '"' + s.replace(/"/g,'""') + '"';
+        }
+        return s;
+      };
+      const lines = [header.join(',')];
+      for (const r of rows) {
+        lines.push([r.timestamp, r.code, r.action, r.qty, r.notes].map(escape).join(','));
+      }
+      const csv = lines.join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const today = new Date().toISOString().substring(0,10);
+      a.href = url;
+      a.download = `transactions-${today}.csv`; 
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    startBtn.addEventListener('click', start);
+    stopBtn.addEventListener('click', stop);
+    addBtn.addEventListener('click', add);
+    clearBtn.addEventListener('click', clearLog);
+    exportBtn.addEventListener('click', exportCSV);
+  </script>
+</body>
+</html>
